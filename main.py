@@ -82,6 +82,8 @@ hour_base['order_time'] = hour_base['order_time'].apply(lambda val: val.hour)
 
 st.set_page_config(layout="wide")
 
+st.title("Dashboard da pizza")
+
 tab1, tab2 = st.tabs(["Movimentação", "Popularidade"])
 
 def weekday_view(month_indexes, weekday_df = weekdays_base):
@@ -113,8 +115,6 @@ def days_botN_view(month_indexes, N, weekday_df = weekdays_base):
     )
     weekdays["order_date"] = list(map(format_label, weekdays.iterrows()))
     return weekdays
-
-st.title("Dashboard da pizza")
 
 def peak_hour_view(month_indexes, grouping = 1, hour_df = hour_base):
     peak_hour_data = hour_base.groupby('order_time', as_index=False).sum()
