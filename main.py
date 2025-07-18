@@ -60,6 +60,45 @@ def format_label(row_tuple):
 
     return f"{day} de {month},\n{weekday}"
 
+
+class ModeloCoocorrencia():
+    def __init__(self, df):
+        coocorrencias = dict()
+        qtd_total = dict()
+        preco_total = dict()
+        for i, row in df.iterrows():
+            ingredientes = row['pizza_ingredients'].split(", ")
+            qtd = row['quantity']
+            preco = row['total_price']
+            peso = preco/(qtd*len(ingredientes))
+            for ingrediente in ingredientes:
+                qtd_total[ingrediente] = qtd_total.get(ingrediente, 0) + qtd
+                preco_total[ingrediente] = preco_total.get(ingrediente, 0) + preco
+                if coocorrencias.get(ingrediente, None) is None:
+                    coocorrencias[ingrediente] = dict()
+                hist = coocorrencias[ingrediente]
+                for ingrediente_target in ingredientes:
+                    hist[ingrediente_target] = hist.get(ingrediente_target, 0) + peso
+        for ingrediente in coocorrencias.keys():
+            hist = coocorrencias[ingrediente]
+            fator_norm = hist[ingrediente]
+            for ingrediente_target in hist.keys():
+                hist[ingrediente_target] /= fator_norm
+
+        self.coocorrencias = coocorrencias
+        self.qtd_total = qtd_total
+        self.preco_total = preco_total
+    
+    def top_k_sugestoes(self, k, ingredientes_selecionados):
+        acumulado = dict()
+        for ingrediente in ingredientes_selecionados:
+            hist = self.coocorrencias[ingrediente]
+            for ing_target, value in hist.items():
+                acumulado[ing_target] = acumulado.get(ing_target, 0) + value
+        for ingrediente in ingredientes_selecionados: acumulado.pop(ingrediente)
+        return sorted(acumulado.keys(), key=lambda key : acumulado[key], reverse=True)[:k]
+
+
 pizza_scaled_plot = lambda labels, values, extended_ratio=1.5 : (
     pizza_plot(labels, values, extended_ratio=extended_ratio,
         base_scale=st.session_state["pizza_scale"]
@@ -80,11 +119,17 @@ weekdays_base = df[['order_date', 'order_weekday', 'quantity']].copy()
 hour_base = df[['order_time', 'quantity']].copy()
 hour_base['order_time'] = hour_base['order_time'].apply(lambda val: val.hour)
 
+@st.cache_resource
+def load_modelo(df):
+    return ModeloCoocorrencia(df)
+
+modelo_cooc = load_modelo(df)
+
 st.set_page_config(layout="wide")
 
 st.title("Dashboard da pizza")
 
-tab1, tab2 = st.tabs(["Movimentação", "Popularidade"])
+tab1, tab2, tab3 = st.tabs(["Movimentação", "Popularidade", "Gerador de Pizza"])
 
 def weekday_view(month_indexes, weekday_df = weekdays_base):
     weekdays = (weekday_df[weekday_df['order_date'].dt.month
@@ -357,3 +402,40 @@ with tab2:
             )
         )
         st.plotly_chart(fig)
+
+with tab3:
+    col1,col2 = st.columns(2)
+
+    if "ingredientes_selecionados" not in st.session_state:
+            st.session_state["ingredientes_selecionados"] = []
+    if "k_sugestoes" not in st.session_state:
+            st.session_state["k_sugestoes"] = 10
+
+    with col1:
+        bcol1, bcol2 = st.columns([5,1])
+        with bcol1:
+            st.multiselect("Ingredientes filtrados", ingredients_list_full, key="ingredientes_selecionados")
+        with bcol2:
+            if st.session_state["day_slider"]:
+                st.slider("Número de sugestões", 1, 30, step=1, key="k_sugestoes", value=st.session_state["k_sugestoes"])
+            else:
+                st.number_input("Número de sugestões", 1, 30, step=1, key="k_sugestoes", value=st.session_state["k_sugestoes"])
+        
+        with st.container():
+            display_text = modelo_cooc.top_k_sugestoes(st.session_state["k_sugestoes"], st.session_state["ingredientes_selecionados"])
+            st.text("Ingredientes sugeridos:")
+            if len(display_text)>0:
+                st.markdown("- "+ "\n- ".join(display_text))
+
+    with col2:
+        texto = '''### Modelo de coocorrência
+
+Para esse sistema de recomendação foi montado um modelo de coocorrências, algo como uma matriz de tamanho [Palavras, Ocorrencias de outras palavras].  
+Para a contagem de ocorrências foram aplicados pesos: tanto para dar mais graça quanto para nivelar mais o que tornava o ingrediente de uma pizza sugerido que o outro.  
+A fórmula para o valor de 'ocorrências' que acontecem são: $ \\frac{P}{QN} $, onde P é o preço total do subpedido, Q é a quantidade de pizzas do subpedido e N é o número de ingredientes na pizza (compensando para pizzas que tenham muitos ingredientes).
+Diferentemente das semelhantes matrizes de co-ocorrência de PDI ou modelos de N-gramas em NLP, aqui a coocorrência leva em conta a pizza inteira (nem sequer poderia levar em conta só uma parte, pizzas não são sequenciais!).  
+A amostragem é feita combinando as 'ocorrências' de cada ingrediente (token), normalizadas pelo seu número de ocorrências, e extraindo os top K ingredientes com maior valor.  
+        '''
+        with st.container():
+            st.markdown(texto)
+        
